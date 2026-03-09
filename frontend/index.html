@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Datalake OAR - Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/style.css">
+</head>
+
+<body>
+    <div class="app-container">
+        <aside class="sidebar">
+            <div class="logo">
+                <span class="logo-icon">🛤️</span>
+                <h1>OAR Datalake</h1>
+            </div>
+            <nav>
+                <a href="#" class="nav-item active" data-view="dashboard">
+                    <span class="icon">📊</span> Dashboard
+                </a>
+                <a href="#" class="nav-item" data-view="datasets">
+                    <span class="icon">🗂️</span> Datasets
+                </a>
+                <a href="#" class="nav-item" data-view="ingestions">
+                    <span class="icon">📥</span> Ingestas API
+                </a>
+                <a href="#" class="nav-item" data-view="files">
+                    <span class="icon">📁</span> Archivos
+                </a>
+                <a href="#" class="nav-item" data-view="settings">
+                    <span class="icon">⚙️</span> Configuración
+                </a>
+            </nav>
+            <div class="sidebar-footer">
+                <div class="user-profile">
+                    <div class="avatar">A</div>
+                    <div class="user-info">
+                        <span class="username">Admin</span>
+                        <span class="role">Administrador</span>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <main class="main-content">
+            <header>
+                <div class="header-search">
+                    <input type="text" placeholder="Buscar datasets, archivos...">
+                </div>
+                <div class="header-actions">
+                    <button class="btn btn-secondary">Notificaciones 🔔</button>
+                    <button class="btn btn-primary" id="uploadBtn">+ Subir Datos</button>
+                </div>
+            </header>
+
+            <section class="content-view" id="dashboardView">
+                <div class="welcome-banner">
+                    <h2>Bienvenido al Datalake Ferroviario</h2>
+                    <p>Gestiona y visualiza la infraestructura de datos de OAR desde un solo lugar.</p>
+                </div>
+
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <span class="stat-label">Total Datasets</span>
+                        <span class="stat-value" data-stat="datasets">--</span>
+                        <span class="stat-change positive">Actualizado</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-label">Archivos Registrados</span>
+                        <span class="stat-value" data-stat="files">--</span>
+                        <span class="stat-change positive">Sincronizado</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-label">Ingestas Exitosas</span>
+                        <span class="stat-value" data-stat="success">--</span>
+                        <span class="stat-change">Ratio de éxito</span>
+                    </div>
+                    <div class="stat-card">
+                        <span class="stat-label">Espacio MinIO</span>
+                        <span class="stat-value" data-stat="storage">--</span>
+                        <span class="stat-change">Uso total</span>
+                    </div>
+                </div>
+
+                <div class="dashboard-main-grid">
+                    <div class="card recent-activity">
+                        <h3>Actividad Reciente</h3>
+                        <ul class="activity-list" id="activityList">
+                            <li class="activity-item">
+                                <span class="tag tag-geo">GeoJSON</span>
+                                <div class="item-details">
+                                    <span class="item-name">Vías_Férreas_Nacional.geojson</span>
+                                    <span class="item-meta">Hace 2 horas • Por Admin</span>
+                                </div>
+                            </li>
+                            <li class="activity-item">
+                                <span class="tag tag-api">API</span>
+                                <div class="item-details">
+                                    <span class="item-name">Ingesta Sensor_Trafico_A1</span>
+                                    <span class="item-meta">Hace 5 horas • Automático</span>
+                                </div>
+                            </li>
+                            <li class="activity-item">
+                                <span class="tag tag-pdf">PDF</span>
+                                <div class="item-details">
+                                    <span class="item-name">Informe_Mantenimiento_Marzo.pdf</span>
+                                    <span class="item-meta">Ayer • Por Editor_OAR</span>
+                                </div>
+                            </li>
+                        </ul>
+                    </div>
+                    <div class="card storage-status">
+                        <h3>Estado de Servicios</h3>
+                        <div class="status-indicator">
+                            <span class="indicator healthy"></span>
+                            <div class="indicator-info">
+                                <strong>PostgreSQL</strong>
+                                <small>Conectado (Railway Instance)</small>
+                            </div>
+                        </div>
+                        <div class="status-indicator">
+                            <span class="indicator healthy"></span>
+                            <div class="indicator-info">
+                                <strong>MinIO Object Storage</strong>
+                                <small>Online (oar-datalake bucket)</small>
+                            </div>
+                        </div>
+                        <div class="status-indicator">
+                            <span class="indicator healthy"></span>
+                            <div class="indicator-info">
+                                <strong>Backend API</strong>
+                                <small>v0.1.0 Healthy</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+    <script src="js/app.js"></script>
+</body>
+
+</html>
