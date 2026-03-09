@@ -1,17 +1,28 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+"""
+DATALAKE OAR — FastAPI Application Entry Point
+Railway data lake: APIs, CSV, GeoJSON, Shapefile, PDF
+"""
 import os
 import logging
 from dotenv import load_dotenv
 
-# Criterio Senior: Cargar .env prioritario, .env.example como fallback
-if os.path.exists(".env"):
-    load_dotenv(".env")
-elif os.path.exists(".env.example"):
-    load_dotenv(".env.example")
-    logging.info("Utilizando .env.example como configuración base.")
+# FIX-1: Cargar entorno ANTES de cualquier import de módulos propios.
+# Los módulos (database.py, storage.py) leen os.getenv() al instanciarse;
+# si load_dotenv() se llama después de importarlos, las variables llegan vacías.
+_env_file = ".env" if os.path.exists(".env") else (".env.example" if os.path.exists(".env.example") else None)
+if _env_file:
+    load_dotenv(_env_file, override=False)  # override=False: Railway Variables tienen prioridad
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(levelname)s:%(name)s:%(message)s"
+)
+logger = logging.getLogger(__name__)
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
 app = FastAPI(
     title="Datalake OAR",
@@ -26,14 +37,13 @@ app.add_middleware(
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
+    allow_credentials=True,
 )
 
-# --- CONFIGURACIÓN DE RUTAS ---
-
-# 1. Importar routers
+# FIX-2: Los routers se importan DESPUÉS de load_dotenv() para que puedan
+# leer variables de entorno correctamente durante sus propias importaciones.
 from app.routers import dashboard, auth, datasets, files
 
-# 2. Registrar API Routers PRIMERO (tienen prioridad sobre estáticos)
 app.include_router(auth.router,      prefix="/api/auth",      tags=["auth"])
 app.include_router(dashboard.router, prefix="/api/dashboard", tags=["dashboard"])
 app.include_router(datasets.router,  prefix="/api/datasets",  tags=["datasets"])
@@ -41,16 +51,19 @@ app.include_router(files.router,     prefix="/api/files",     tags=["files"])
 
 @app.get("/health", tags=["system"])
 async def health():
-    return {"status": "ok", "service": "oar-datalake"}
+    """Healthcheck para Railway. Confirma que la app arrancó correctamente."""
+    return {"status": "ok", "service": "oar-datalake", "version": "0.1.0"}
 
-# 3. Configurar Frontend
-frontend_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend")
+# FIX-3: Resolver el path del frontend de forma robusta usando __file__
+# independientemente del directorio de trabajo actual (cwd) del proceso.
+_base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+frontend_path = os.path.join(_base_dir, "frontend")
 
-# Ruta raíz explícita para el index.html
 @app.get("/")
 async def read_index():
+    """Sirve el frontend SPA."""
     return FileResponse(os.path.join(frontend_path, "index.html"))
 
-# Montar el resto de la carpeta frontend en la raíz "/" 
-# Esto resuelve /css/... y /js/... automáticamente
-app.mount("/", StaticFiles(directory=frontend_path), name="static")
+# FIX-4: StaticFiles SIEMPRE al final. FastAPI registra rutas en orden;
+# el mount "/" actúa como catch-all y bloquea rutas posteriores.
+app.mount("/", StaticFiles(directory=frontend_path, html=True), name="static")
