@@ -3,6 +3,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 import os
+import logging
+from dotenv import load_dotenv
+
+# Criterio Senior: Cargar .env prioritario, .env.example como fallback
+if os.path.exists(".env"):
+    load_dotenv(".env")
+elif os.path.exists(".env.example"):
+    load_dotenv(".env.example")
+    logging.info("Utilizando .env.example como configuración base.")
 
 app = FastAPI(
     title="Datalake OAR",

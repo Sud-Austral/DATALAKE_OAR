@@ -13,7 +13,12 @@ def _get_engine():
     if _engine is None:
         raw_url = os.getenv("DATABASE_URL", "")
         if not raw_url:
-            raise RuntimeError("DATABASE_URL no está configurada. Verifica las variables de entorno.")
+            available_vars = ", ".join([k for k in os.environ.keys() if "URL" in k or "DB" in k or "POSTGRES" in k])
+            raise RuntimeError(
+                f"DATABASE_URL no encontrada en el entorno. "
+                f"Variables detectadas similares: [{available_vars}]. "
+                "Asegúrate de configurar DATABASE_URL en la pestaña Variables de Railway."
+            )
 
         # asyncpg requiere el esquema postgresql+asyncpg://
         db_url = raw_url.replace("postgresql://", "postgresql+asyncpg://", 1)
