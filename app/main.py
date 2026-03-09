@@ -1,7 +1,3 @@
-"""
-DATALAKE OAR — FastAPI Application Entry Point
-Railway data lake: APIs, CSV, GeoJSON, Shapefile, PDF
-"""
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -23,29 +19,29 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# BUG FIX #1: Los routers deben registrarse ANTES de montar los estáticos.
-# StaticFiles actúa como catch-all y "secuestra" cualquier ruta /api/* si va primero.
+# --- CONFIGURACIÓN DE RUTAS ---
+
+# 1. Importar routers
 from app.routers import dashboard, auth, datasets, files
 
+# 2. Registrar API Routers PRIMERO (tienen prioridad sobre estáticos)
 app.include_router(auth.router,      prefix="/api/auth",      tags=["auth"])
 app.include_router(dashboard.router, prefix="/api/dashboard", tags=["dashboard"])
 app.include_router(datasets.router,  prefix="/api/datasets",  tags=["datasets"])
 app.include_router(files.router,     prefix="/api/files",     tags=["files"])
 
-# BUG FIX #2: El endpoint /health estaba huérfano (sin decorador) tras las ediciones
-# anteriores. Se restaura correctamente.
 @app.get("/health", tags=["system"])
 async def health():
-    """Healthcheck endpoint para Railway."""
-    return {"status": "ok", "service": "oar-datalake", "version": "0.1.0"}
+    return {"status": "ok", "service": "oar-datalake"}
 
-# BUG FIX #3: La ruta raíz "/" debe declararse ANTES de montar StaticFiles,
-# porque StaticFiles registrado en "/" absorbe todas las rutas no definidas aún.
+# 3. Configurar Frontend
 frontend_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend")
 
+# Ruta raíz explícita para el index.html
 @app.get("/")
 async def read_index():
     return FileResponse(os.path.join(frontend_path, "index.html"))
 
-# StaticFiles al final — solo sirve lo que no capturaron las rutas anteriores
-app.mount("/static", StaticFiles(directory=frontend_path), name="static")
+# Montar el resto de la carpeta frontend en la raíz "/" 
+# Esto resuelve /css/... y /js/... automáticamente
+app.mount("/", StaticFiles(directory=frontend_path), name="static")
