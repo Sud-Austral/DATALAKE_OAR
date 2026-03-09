@@ -33,8 +33,9 @@ async def read_index():
 
 app.mount("/", StaticFiles(directory=frontend_path), name="static")
 
-from app.routers import dashboard
+from app.routers import dashboard, auth
 app.include_router(dashboard.router, prefix="/api/dashboard", tags=["dashboard"])
+app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 async def health():
     """Healthcheck endpoint."""
     return {"status": "ok", "service": "oar-datalake"}
