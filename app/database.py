@@ -1,11 +1,32 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 import os
+import logging
 
-DATABASE_URL = os.getenv("DATABASE_URL", "").replace("postgresql://", "postgresql+asyncpg://")
+logger = logging.getLogger(__name__)
 
-engine = create_async_engine(DATABASE_URL, echo=True)
-AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+_engine = None
+_session_factory = None
+
+def _get_engine():
+    """Crea el engine de forma lazy, solo cuando se necesita."""
+    global _engine, _session_factory
+    if _engine is None:
+        raw_url = os.getenv("DATABASE_URL", "")
+        if not raw_url:
+            raise RuntimeError("DATABASE_URL no está configurada. Verifica las variables de entorno.")
+
+        # asyncpg requiere el esquema postgresql+asyncpg://
+        db_url = raw_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        logger.info("Inicializando conexión a la base de datos...")
+
+        _engine = create_async_engine(db_url, echo=False, pool_pre_ping=True)
+        _session_factory = async_sessionmaker(
+            _engine, expire_on_commit=False, class_=AsyncSession
+        )
+    return _engine, _session_factory
 
 async def get_db():
-    async with AsyncSessionLocal() as session:
+    """Dependency de FastAPI para inyectar sesiones de base de datos."""
+    _, factory = _get_engine()
+    async with factory() as session:
         yield session

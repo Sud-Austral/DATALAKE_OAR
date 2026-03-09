@@ -1,138 +1,194 @@
 document.addEventListener('DOMContentLoaded', () => {
     console.log('OAR Datalake Frontend Initialized');
 
-    // Gestión de Login
+    // UI Elements
     const loginView = document.getElementById('loginView');
     const appContainer = document.getElementById('appContainer');
-    const loginForm = document.getElementById('loginForm');
-    const loginError = document.getElementById('loginError');
-    const logoutBtn = document.getElementById('logoutBtn');
+    const sections = document.querySelectorAll('.content-view');
+    const navItems = document.querySelectorAll('.nav-item');
 
-    // Revisar si ya estamos logueados
+    // Auth & User State
+    let currentUser = JSON.parse(localStorage.getItem('oar_user'));
+
     if (localStorage.getItem('oar_token')) {
-        showApp(JSON.parse(localStorage.getItem('oar_user')));
+        showApp(currentUser);
     }
 
-    loginForm.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const username = document.getElementById('username').value;
-        const password = document.getElementById('password').value;
-        const btn = loginForm.querySelector('.login-btn');
-        const prevText = btn.textContent;
-        btn.textContent = 'Verificando...';
-        btn.disabled = true;
-        loginError.style.display = 'none';
-
-        try {
-            const res = await fetch('/api/auth/login', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username, password })
-            });
-
-            if (res.ok) {
-                const data = await res.json();
-                localStorage.setItem('oar_token', data.token);
-                localStorage.setItem('oar_user', JSON.stringify(data.user));
-                showApp(data.user);
-            } else {
-                loginError.style.display = 'block';
-            }
-        } catch (error) {
-            console.error("Login err:", error);
-            loginError.textContent = "Error de conexión";
-            loginError.style.display = 'block';
-        } finally {
-            btn.textContent = prevText;
-            btn.disabled = false;
-        }
+    // --- NAVIGATION ---
+    navItems.forEach(item => {
+        item.addEventListener('click', (e) => {
+            e.preventDefault();
+            const viewId = item.getAttribute('data-view');
+            switchView(viewId);
+            navItems.forEach(i => i.classList.remove('active'));
+            item.classList.add('active');
+        });
     });
 
-    logoutBtn.addEventListener('click', () => {
-        localStorage.removeItem('oar_token');
-        localStorage.removeItem('oar_user');
-        loginView.style.display = 'flex';
-        appContainer.style.display = 'none';
-        document.getElementById('password').value = '';
-    });
+    function switchView(viewId) {
+        sections.forEach(s => s.style.display = 'none');
+        document.getElementById(viewId).style.display = 'block';
+        if (viewId === 'dashboardView') updateDashboard();
+        if (viewId === 'datasetsView') loadDatasets();
+    }
 
     function showApp(user) {
         loginView.style.display = 'none';
         appContainer.style.display = 'grid';
         document.getElementById('displayUser').textContent = user.username;
         document.getElementById('displayRole').textContent = user.role.toUpperCase();
-
-        // Cargar datos
-        updateDashboard();
-        loadActivity();
+        document.getElementById('avatarLetter').textContent = user.username[0].toUpperCase();
+        switchView('dashboardView');
     }
 
-    const updateDashboard = async () => {
+    // --- DASHBOARD LOGIC ---
+    async function updateDashboard() {
         try {
             const res = await fetch('/api/dashboard/stats');
-            const stats = await res.json();
+            const data = await res.json();
+            document.querySelector('[data-stat="datasets"]').textContent = data.datasets;
+            document.querySelector('[data-stat="files"]').textContent = data.files;
+            document.querySelector('[data-stat="success"]').textContent = data.success_rate;
+            document.querySelector('[data-stat="storage"]').textContent = data.storage;
 
-            // Actualizar contadores
-            document.querySelector('[data-stat="datasets"]').textContent = stats.datasets;
-            document.querySelector('[data-stat="files"]').textContent = stats.files;
-            document.querySelector('[data-stat="success"]').textContent = stats.success_rate;
-            document.querySelector('[data-stat="storage"]').textContent = stats.storage;
-        } catch (e) {
-            console.error("Error al cargar estadísticas", e);
-        }
-    };
-
-    const loadActivity = async () => {
-        try {
-            const res = await fetch('/api/dashboard/recent-activity');
-            const activities = await res.json();
+            const actRes = await fetch('/api/dashboard/recent-activity');
+            const acts = await actRes.json();
             const list = document.getElementById('activityList');
-            list.innerHTML = activities.map(act => `
+            list.innerHTML = acts.map(a => `
                 <li class="activity-item">
-                    <span class="tag tag-api">${act.entity}</span>
+                    <span class="tag ${getTagClass(a.entity)}">${a.entity}</span>
                     <div class="item-details">
-                        <span class="item-name">${act.action} en ${act.entity}</span>
-                        <span class="item-meta">${new Date(act.created_at).toLocaleString()}</span>
+                        <span class="item-name">${a.action}: ${a.details || ''}</span>
+                        <span class="item-meta">${new Date(a.created_at).toLocaleString()}</span>
                     </div>
                 </li>
             `).join('');
-        } catch (e) {
-            console.error("Error al cargar actividad", e);
-        }
-    };
-
-    updateDashboard();
-    loadActivity();
-
-    // Navegación Básica
-    const navItems = document.querySelectorAll('.nav-item');
-    navItems.forEach(item => {
-        item.addEventListener('click', (e) => {
-            e.preventDefault();
-            navItems.forEach(i => i.classList.remove('active'));
-            item.classList.add('active');
-            const view = item.getAttribute('data-view');
-            console.log(`Cambiando a vista: ${view}`);
-            // Aquí iría la lógica para cargar datos dinámicos
-        });
-    });
-
-    // Simulación de interacción con la API
-    async function checkHealth() {
-        try {
-            const response = await fetch('/health');
-            const data = await response.json();
-            console.log('Service Health:', data);
-        } catch (error) {
-            console.warn('Backend no disponible aún para healthcheck');
-        }
+        } catch (e) { console.error(e); }
     }
 
-    checkHealth();
+    function getTagClass(entity) {
+        if (entity === 'files') return 'tag-geo';
+        if (entity === 'api_ingestions') return 'tag-api';
+        return 'tag-pdf';
+    }
 
-    // Evento Subir Archivo
-    const uploadBtn = document.getElementById('uploadBtn');
-    uploadBtn.addEventListener('click', () => {
-        alert('Funcionalidad de subida en desarrollo. El backend está listo para recibir archivos en /upload');
+    // --- DATASETS LOGIC ---
+    async function loadDatasets() {
+        try {
+            const res = await fetch('/api/datasets/');
+            const datasets = await res.json();
+            const grid = document.getElementById('datasetsGrid');
+            grid.innerHTML = datasets.map(ds => `
+                <div class="card dataset-card" onclick="openDataset('${ds.id}', '${ds.name}')">
+                    <div class="ds-icon">📁</div>
+                    <h4>${ds.name}</h4>
+                    <p>${ds.description || 'Sin descripción'}</p>
+                    <div class="ds-footer">
+                        <span class="tag tag-api">${ds.domain}</span>
+                        <span class="ds-date">${new Date(ds.created_at).toLocaleDateString()}</span>
+                    </div>
+                </div>
+            `).join('');
+        } catch (e) { console.error(e); }
+    }
+
+    window.openDataset = async (id, name) => {
+        document.getElementById('currentDatasetName').textContent = name;
+        document.getElementById('uploadDatasetId').value = id;
+        switchView('filesView');
+        loadFiles(id);
+    };
+
+    async function loadFiles(datasetId) {
+        try {
+            const res = await fetch(`/api/files/list/${datasetId}`);
+            const files = await res.json();
+            const tbody = document.getElementById('filesTableBody');
+            tbody.innerHTML = files.map(f => `
+                <tr>
+                    <td><strong>${f.name}</strong></td>
+                    <td><span class="tag tag-geo">${f.file_type}</span></td>
+                    <td>${(f.size_bytes / 1024).toFixed(1)} KB</td>
+                    <td>${new Date(f.created_at).toLocaleDateString()}</td>
+                    <td>
+                        <button class="btn btn-secondary" onclick="downloadFile('${f.id}')">⬇️</button>
+                    </td>
+                </tr>
+            `).join('');
+        } catch (e) { console.error(e); }
+    }
+
+    window.downloadFile = async (id) => {
+        const res = await fetch(`/api/files/download/${id}`);
+        const data = await res.json();
+        window.open(data.url, '_blank');
+    };
+
+    // --- MODALS & FORMS ---
+    const uploadModal = document.getElementById('uploadModal');
+    const datasetModal = document.getElementById('datasetModal');
+
+    document.getElementById('newDatasetBtn').addEventListener('click', () => datasetModal.style.display = 'flex');
+    document.getElementById('openUploadBtn').addEventListener('click', () => uploadModal.style.display = 'flex');
+    document.getElementById('closeDatasetModal').addEventListener('click', () => datasetModal.style.display = 'none');
+    document.getElementById('closeUploadModal').addEventListener('click', () => uploadModal.style.display = 'none');
+
+    document.getElementById('datasetForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const body = {
+            name: document.getElementById('dsName').value,
+            description: document.getElementById('dsDesc').value,
+            domain: document.getElementById('dsDomain').value,
+            owner_id: currentUser.id
+        };
+        const res = await fetch('/api/datasets/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        if (res.ok) {
+            datasetModal.style.display = 'none';
+            loadDatasets();
+        }
+    });
+
+    document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const formData = new FormData();
+        formData.append('file', document.getElementById('fileInput').files[0]);
+        formData.append('dataset_id', document.getElementById('uploadDatasetId').value);
+        formData.append('user_id', currentUser.id);
+
+        const res = await fetch('/api/files/upload', {
+            method: 'POST',
+            body: formData
+        });
+        if (res.ok) {
+            uploadModal.style.display = 'none';
+            loadFiles(document.getElementById('uploadDatasetId').value);
+        }
+    });
+
+    document.getElementById('backToDatasets').addEventListener('click', () => switchView('datasetsView'));
+
+    // --- LOGIN FORM ---
+    document.getElementById('loginForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const username = document.getElementById('username').value;
+        const password = document.getElementById('password').value;
+        const res = await fetch('/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password })
+        });
+        if (res.ok) {
+            const data = await res.json();
+            localStorage.setItem('oar_token', data.token);
+            localStorage.setItem('oar_user', JSON.stringify(data.user));
+            currentUser = data.user;
+            showApp(data.user);
+        } else {
+            document.getElementById('loginError').style.display = 'block';
+        }
     });
 });

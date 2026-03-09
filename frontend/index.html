@@ -35,33 +35,30 @@
         </div>
     </div>
 
-    <!-- Aplicación Principal (oculta por defecto) -->
+    <!-- Aplicación Principal -->
     <div id="appContainer" class="app-container" style="display: none;">
         <aside class="sidebar">
             <div class="logo">
                 <span class="logo-icon">🛤️</span>
                 <h1>OAR Datalake</h1>
             </div>
-            <nav>
-                <a href="#" class="nav-item active" data-view="dashboard">
+            <nav id="mainNav">
+                <a href="#" class="nav-item active" data-view="dashboardView">
                     <span class="icon">📊</span> Dashboard
                 </a>
-                <a href="#" class="nav-item" data-view="datasets">
+                <a href="#" class="nav-item" data-view="datasetsView">
                     <span class="icon">🗂️</span> Datasets
                 </a>
-                <a href="#" class="nav-item" data-view="ingestions">
+                <a href="#" class="nav-item" data-view="ingestionsView">
                     <span class="icon">📥</span> Ingestas API
                 </a>
-                <a href="#" class="nav-item" data-view="files">
-                    <span class="icon">📁</span> Archivos
-                </a>
-                <a href="#" class="nav-item" data-view="settings">
+                <a href="#" class="nav-item" data-view="settingsView">
                     <span class="icon">⚙️</span> Configuración
                 </a>
             </nav>
             <div class="sidebar-footer">
                 <div class="user-profile">
-                    <div class="avatar">A</div>
+                    <div class="avatar" id="avatarLetter">A</div>
                     <div class="user-info">
                         <span class="username" id="displayUser">---</span>
                         <span class="role" id="displayRole">---</span>
@@ -79,14 +76,15 @@
                 </div>
                 <div class="header-actions">
                     <button class="btn btn-secondary">Notificaciones 🔔</button>
-                    <button class="btn btn-primary" id="uploadBtn">+ Subir Datos</button>
+                    <button class="btn btn-primary" id="globalAddBtn">+ Acción Rápida</button>
                 </div>
             </header>
 
+            <!-- VISTA: DASHBOARD -->
             <section class="content-view" id="dashboardView">
                 <div class="welcome-banner">
-                    <h2>Bienvenido al Datalake Ferroviario</h2>
-                    <p>Gestiona y visualiza la infraestructura de datos de OAR desde un solo lugar.</p>
+                    <h2>Panel de Control</h2>
+                    <p>Estado actual de la infraestructura de datos OAR.</p>
                 </div>
 
                 <div class="stats-grid">
@@ -116,27 +114,7 @@
                     <div class="card recent-activity">
                         <h3>Actividad Reciente</h3>
                         <ul class="activity-list" id="activityList">
-                            <li class="activity-item">
-                                <span class="tag tag-geo">GeoJSON</span>
-                                <div class="item-details">
-                                    <span class="item-name">Vías_Férreas_Nacional.geojson</span>
-                                    <span class="item-meta">Hace 2 horas • Por Admin</span>
-                                </div>
-                            </li>
-                            <li class="activity-item">
-                                <span class="tag tag-api">API</span>
-                                <div class="item-details">
-                                    <span class="item-name">Ingesta Sensor_Trafico_A1</span>
-                                    <span class="item-meta">Hace 5 horas • Automático</span>
-                                </div>
-                            </li>
-                            <li class="activity-item">
-                                <span class="tag tag-pdf">PDF</span>
-                                <div class="item-details">
-                                    <span class="item-name">Informe_Mantenimiento_Marzo.pdf</span>
-                                    <span class="item-meta">Ayer • Por Editor_OAR</span>
-                                </div>
-                            </li>
+                            <!-- Actividad dinámica -->
                         </ul>
                     </div>
                     <div class="card storage-status">
@@ -155,18 +133,98 @@
                                 <small>Online (oar-datalake bucket)</small>
                             </div>
                         </div>
-                        <div class="status-indicator">
-                            <span class="indicator healthy"></span>
-                            <div class="indicator-info">
-                                <strong>Backend API</strong>
-                                <small>v0.1.0 Healthy</small>
-                            </div>
-                        </div>
                     </div>
+                </div>
+            </section>
+
+            <!-- VISTA: DATASETS -->
+            <section class="content-view" id="datasetsView" style="display: none;">
+                <div class="view-header">
+                    <h2>Explorador de Datasets</h2>
+                    <button class="btn btn-primary" id="newDatasetBtn">+ Nuevo Dataset</button>
+                </div>
+                <br>
+                <div class="datasets-grid" id="datasetsGrid">
+                    <!-- Cards de Datasets dinámicas -->
+                </div>
+            </section>
+
+            <!-- VISTA: ARCHIVOS (SUB-VISTA) -->
+            <section class="content-view" id="filesView" style="display: none;">
+                <div class="view-header">
+                    <button class="btn btn-secondary" id="backToDatasets">← Volver</button>
+                    <h2>Archivos: <span id="currentDatasetName">--</span></h2>
+                    <button class="btn btn-primary" id="openUploadBtn">+ Subir Archivo</button>
+                </div>
+                <br>
+                <div class="card">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Archivo</th>
+                                <th>Tipo</th>
+                                <th>Tamaño</th>
+                                <th>Subido el</th>
+                                <th>Acción</th>
+                            </tr>
+                        </thead>
+                        <tbody id="filesTableBody">
+                            <!-- Filas dinámicas -->
+                        </tbody>
+                    </table>
                 </div>
             </section>
         </main>
     </div>
+
+    <!-- MODAL: SUBIR ARCHIVO -->
+    <div id="uploadModal" class="modal-overlay" style="display: none;">
+        <div class="modal-card">
+            <h3>Subir Recurso al Datalake</h3>
+            <p id="uploadTargetLabel" style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 1rem;"></p>
+            <form id="uploadForm">
+                <input type="hidden" id="uploadDatasetId">
+                <div class="form-group">
+                    <label>Archivo (CSV, GeoJSON, PDF)</label>
+                    <input type="file" id="fileInput" required>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" id="closeUploadModal">Cancelar</button>
+                    <button type="submit" class="btn btn-primary">Iniciar Carga</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL: NUEVO DATASET -->
+    <div id="datasetModal" class="modal-overlay" style="display: none;">
+        <div class="modal-card">
+            <h3>Crear Agrupación de Datos</h3>
+            <form id="datasetForm">
+                <div class="form-group">
+                    <label>Nombre del Dataset</label>
+                    <input type="text" id="dsName" placeholder="Ej: Red Ferroviaria 2024" required>
+                </div>
+                <div class="form-group">
+                    <label>Descripción</label>
+                    <input type="text" id="dsDesc" placeholder="Vías, estaciones y cruces...">
+                </div>
+                <div class="form-group">
+                    <label>Dominio</label>
+                    <select id="dsDomain">
+                        <option value="railway">Infraestructura Crítica</option>
+                        <option value="geospatial">Mapas y GIS</option>
+                        <option value="environment">Medio Ambiente</option>
+                    </select>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" id="closeDatasetModal">Cancelar</button>
+                    <button type="submit" class="btn btn-primary">Crear</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <script src="js/app.js"></script>
 </body>
 
