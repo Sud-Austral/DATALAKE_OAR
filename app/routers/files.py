@@ -1,24 +1,25 @@
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Form
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from app.database import get_db
 from app.utils.storage import storage
+from app.routers.auth import verify_token
 import uuid
+import json
+import io
+import os
 import logging
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# Tipos de archivo aceptados por el CHECK constraint de la tabla files
 _DB_FILE_TYPES = {"csv", "geojson", "shapefile", "pdf", "other"}
 _GIS_EXTENSIONS = {"shp", "dbf", "prj", "shx", "cpg"}
+_CHUNK_SIZE = 8 * 1024 * 1024  # 8 MB por chunk
 
 
 def resolve_file_type(filename: str) -> str:
-    """
-    Resuelve el valor correcto para la columna file_type de PostgreSQL.
-    Debe ser uno de: csv, geojson, shapefile, pdf, other
-    """
     if not filename or "." not in filename:
         return "other"
     ext = filename.rsplit(".", 1)[-1].lower()
@@ -32,26 +33,51 @@ def resolve_file_type(filename: str) -> str:
 @router.post("/upload")
 async def upload_file(
     dataset_id: str = Form(...),
-    user_id:    str = Form(...),
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(verify_token),   # ← protegido
 ):
-    """Sube un archivo a MinIO y registra metadatos en PostgreSQL."""
+    """Sube un archivo a MinIO usando lectura en chunks (soporta archivos grandes)."""
     if not file.filename:
         raise HTTPException(status_code=400, detail="El archivo debe tener nombre.")
 
     file_type   = resolve_file_type(file.filename)
-    content     = await file.read()
     file_uuid   = str(uuid.uuid4())
     object_name = f"{dataset_id}/{file_uuid}_{file.filename}"
+    user_id     = current_user["id"]
+
+    # ── Leer en chunks para no cargar todo en RAM ─────────────────────
+    chunks = []
+    total_size = 0
+    while True:
+        chunk = await file.read(_CHUNK_SIZE)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        total_size += len(chunk)
+
+    content = b"".join(chunks)
 
     try:
-        # 1. MinIO
-        storage_path = storage.upload_file(
-            file_content=content,
-            object_name=object_name,
-            content_type=file.content_type,
-        )
+        # 1. MinIO upload
+        try:
+            storage_path = storage.upload_file(
+                file_content=content,
+                object_name=object_name,
+                content_type=file.content_type,
+            )
+        except Exception as minio_err:
+            err_str = str(minio_err)
+            ep = os.getenv("MINIO_ENDPOINT", "localhost:9000")
+            if not os.getenv("MINIO_ACCESS_KEY"):
+                msg = "MINIO_ACCESS_KEY no configurada en Railway → Variables."
+            elif "Connection" in err_str or "endpoint" in err_str.lower() or "refused" in err_str.lower():
+                msg = (f"No se puede conectar a MinIO en '{ep}'. "
+                       "Verifica que el servicio MinIO esté corriendo.")
+            else:
+                msg = f"Error en MinIO ({ep}): {err_str}"
+            logger.error(f"MinIO upload failed: {msg}")
+            raise HTTPException(status_code=503, detail=msg)
 
         # 2. Metadata en PostgreSQL
         await db.execute(
@@ -72,25 +98,24 @@ async def upload_file(
                 "mime":         file.content_type or "application/octet-stream",
                 "storage_path": storage_path,
                 "bucket":       storage.bucket_name,
-                "size":         len(content),
-                "uploaded_by":  uuid.UUID(user_id) if user_id else None,
+                "size":         total_size,
+                "uploaded_by":  uuid.UUID(user_id),
             },
         )
 
-        # 3. Audit log con details como JSONB
-        import json
+        # 3. Audit log
         await db.execute(
             text("""
                 INSERT INTO audit_log (user_id, action, entity, entity_id, details)
                 VALUES (:user, 'UPLOAD', 'files', :entity_id, CAST(:details AS JSONB))
             """),
             {
-                "user":      uuid.UUID(user_id) if user_id else None,
+                "user":      uuid.UUID(user_id),
                 "entity_id": uuid.UUID(file_uuid),
                 "details":   json.dumps({
                     "filename":  file.filename,
                     "file_type": file_type,
-                    "size":      len(content),
+                    "size":      total_size,
                 }),
             },
         )
@@ -107,7 +132,11 @@ async def upload_file(
 
 
 @router.get("/list/{dataset_id}")
-async def list_files(dataset_id: str, db: AsyncSession = Depends(get_db)):
+async def list_files(
+    dataset_id: str,
+    db: AsyncSession = Depends(get_db),
+    # PúBlico: no requiere token — permite integración con otros sistemas
+):
     """Lista archivos de un dataset específico."""
     import uuid as uuid_mod
     from datetime import datetime
@@ -137,26 +166,45 @@ async def list_files(dataset_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/download/{file_id}")
-async def get_file_url(file_id: str, db: AsyncSession = Depends(get_db)):
-    """Genera una URL temporal firmada para descarga del archivo."""
+async def download_file(
+    file_id: str,
+    db: AsyncSession = Depends(get_db),
+    # PúBlico: descarga abierta — permite embeber archivos del datalake en otros proyectos
+):
+    """
+    Descarga un archivo en streaming a través del backend.
+    No usa presigned URLs porque MinIO corre en localhost:9000
+    y esa dirección no es accesible desde el navegador del usuario.
+    """
     import uuid as uuid_mod
+
     result = await db.execute(
-        text("SELECT storage_path, name FROM files WHERE id = :id"),
+        text("SELECT storage_path, name, mime_type FROM files WHERE id = :id"),
         {"id": uuid_mod.UUID(file_id)},
     )
     file_data = result.fetchone()
 
-
     if not file_data:
         raise HTTPException(status_code=404, detail="Archivo no encontrado")
 
-    # storage_path = "bucket/dataset_id/uuid_filename"
-    # Quitamos el prefijo "bucket/" para obtener la object key
     parts = file_data.storage_path.split("/", 1)
     object_key = parts[1] if len(parts) > 1 else file_data.storage_path
 
-    url = storage.get_download_url(object_key)
-    if not url:
-        raise HTTPException(status_code=500, detail="No se pudo generar URL de descarga")
+    try:
+        client   = storage._get_client()
+        response = client.get_object(Bucket=storage.bucket_name, Key=object_key)
+        body     = response["Body"].read()
+        mime     = file_data.mime_type or "application/octet-stream"
+        filename = file_data.name or "archivo"
 
-    return {"url": url, "filename": file_data.name}
+        return StreamingResponse(
+            io.BytesIO(body),
+            media_type=mime,
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Content-Length": str(len(body)),
+            },
+        )
+    except Exception as e:
+        logger.error(f"Error descargando {file_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Error al descargar: {str(e)}")

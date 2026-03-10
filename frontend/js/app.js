@@ -10,9 +10,19 @@ document.addEventListener('DOMContentLoaded', () => {
     const hide = id => { const e = $(id); if (e) e.style.display = 'none'; };
     const flex = id => { const e = $(id); if (e) e.style.display = 'flex'; };
 
-    // ── API helper con manejo de errores ──────────────────────────────
+    // ── API helper — inyecta JWT automáticamente ──────────────────────
     async function api(url, opts = {}) {
-        const res = await fetch(url, opts);
+        const token = localStorage.getItem('oar_token');
+        const headers = { ...(opts.headers || {}) };
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+
+        const res = await fetch(url, { ...opts, headers });
+
+        if (res.status === 401) {
+            localStorage.clear();
+            location.reload();
+            return;
+        }
         if (!res.ok) {
             let msg;
             try { const j = await res.json(); msg = j.detail || JSON.stringify(j); }
@@ -112,14 +122,19 @@ document.addEventListener('DOMContentLoaded', () => {
     // ══════════════════════════════════════════════════════════════════
     // DASHBOARD
     // ══════════════════════════════════════════════════════════════════
+    function setText(id, val) {
+        const el = $(id);
+        if (el) el.textContent = (val !== null && val !== undefined) ? val : '--';
+    }
+
     async function loadDashboard() {
         try {
             const s = await api('/api/dashboard/stats');
-            $('statDatasets').textContent = s.datasets ?? '--';
-            $('statFiles').textContent = s.files ?? '--';
-            $('statSuccess').textContent = s.success_rate ?? '--';
-            $('statStorage').textContent = s.storage ?? '--';
-        } catch (e) { console.error('Stats:', e.message); }
+            setText('statDatasets', s.datasets);
+            setText('statFiles', s.files);
+            setText('statSuccess', s.success_rate);
+            setText('statStorage', s.storage);
+        } catch (e) { console.error('Stats error:', e.message); }
 
         try {
             const acts = await api('/api/dashboard/recent-activity');
@@ -289,12 +304,23 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     window.downloadFile = async function (fileId) {
+        const token = localStorage.getItem('oar_token');
         try {
-            const data = await api(`/api/files/download/${fileId}`);
-            window.open(data.url, '_blank');
-        } catch (e) {
-            alert(`Error al descargar:\n${e.message}`);
-        }
+            const res = await fetch(`/api/files/download/${fileId}`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (!res.ok) { throw new Error(await res.text()); }
+            const blob = await res.blob();
+            const disp = res.headers.get('Content-Disposition') || '';
+            const nameMatch = disp.match(/filename="?([^"]+)"?/);
+            const filename = nameMatch ? nameMatch[1] : 'archivo';
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url; a.download = filename;
+            document.body.appendChild(a); a.click();
+            document.body.removeChild(a);
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+        } catch (e) { alert(`Error al descargar: ${e.message}`); }
     };
 
     // ══════════════════════════════════════════════════════════════════

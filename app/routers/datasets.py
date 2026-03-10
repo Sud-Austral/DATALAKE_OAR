@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from app.database import get_db
+from app.routers.auth import verify_token
 from pydantic import BaseModel
 from typing import Optional
 import logging
@@ -33,8 +34,11 @@ def _serialize_row(row: dict) -> dict:
 
 
 @router.get("/")
-async def list_datasets(db: AsyncSession = Depends(get_db)):
-    """Lista todos los datasets activos."""
+async def list_datasets(
+    db: AsyncSession = Depends(get_db),
+    _: dict = Depends(verify_token),
+):
+    """Lista todos los datasets activos. Requiere autenticación."""
     result = await db.execute(
         text("SELECT * FROM datasets WHERE status = 'active' ORDER BY created_at DESC")
     )
@@ -42,8 +46,12 @@ async def list_datasets(db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/", status_code=201)
-async def create_dataset(ds: DatasetCreate, db: AsyncSession = Depends(get_db)):
-    """Crea un nuevo contenedor de datos (Dataset)."""
+async def create_dataset(
+    ds: DatasetCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(verify_token),
+):
+    """Crea un nuevo contenedor de datos. Requiere autenticación."""
     try:
         import uuid
         result = await db.execute(
@@ -53,10 +61,10 @@ async def create_dataset(ds: DatasetCreate, db: AsyncSession = Depends(get_db)):
                 RETURNING id, created_at
             """),
             {
-                "name": ds.name,
+                "name":        ds.name,
                 "description": ds.description,
-                "domain": ds.domain,
-                "owner_id": uuid.UUID(ds.owner_id)
+                "domain":      ds.domain,
+                "owner_id":    uuid.UUID(current_user["id"]),  # del token, no del body
             },
         )
         row = result.fetchone()
