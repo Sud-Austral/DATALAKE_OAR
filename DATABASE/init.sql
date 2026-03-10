@@ -14,22 +14,20 @@ VALUES (
     'admin'
 ) ON CONFLICT (username) DO NOTHING;
 
--- Tags base del dominio ferroviario
+-- Tags base del dominio OAR Ambiental
 INSERT INTO tags (name, color) VALUES
-    ('railway',        '#3B82F6'),
-    ('infrastructure', '#8B5CF6'),
-    ('geospatial',     '#10B981'),
-    ('environment',    '#22C55E'),
-    ('traffic',        '#F59E0B'),
-    ('safety',         '#EF4444'),
-    ('maintenance',    '#F97316')
+    ('Calidad Ambiental',     '#10B981'),
+    ('Mares y Biodiversidad', '#3B82F6'),
+    ('Recurso Hídrico',      '#0EA5E9'),
+    ('Bosques y Paisajes',   '#22C55E'),
+    ('Cambio Climático',     '#EF4444')
 ON CONFLICT (name) DO NOTHING;
 
 -- Dataset de ejemplo
 INSERT INTO datasets (name, description, domain, status)
 VALUES (
-    'OAR Base Infrastructure',
-    'Datos base de infraestructura ferroviaria OAR',
-    'railway',
+    'Monitoreo Ambiental OAR',
+    'Datos de base para monitoreo ambiental y biodiversidad',
+    'calidad-ambiental',
     'active'
 ) ON CONFLICT DO NOTHING;
