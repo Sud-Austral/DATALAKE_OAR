@@ -37,7 +37,8 @@ app.add_middleware(
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
-    allow_credentials=True,
+    # allow_credentials NO puede usarse con allow_origins=["*"]
+    # Se elimina para evitar error de arranque en starlette >= 0.21
 )
 
 # FIX-2: Los routers se importan DESPUÉS de load_dotenv() para que puedan
