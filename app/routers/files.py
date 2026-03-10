@@ -54,20 +54,18 @@ async def upload_file(
         )
 
         # 2. Metadata en PostgreSQL
-        # FIX: No usar ::uuid en ningún parámetro nombrado (rompe asyncpg).
-        # En su lugar, se convierten los UUIDs a string antes de pasarlos.
         await db.execute(
             text("""
                 INSERT INTO files
                     (id, dataset_id, name, original_name, file_type,
                      mime_type, storage_path, bucket, size_bytes, uploaded_by)
                 VALUES
-                    (:id::uuid, :dataset_id::uuid, :name, :orig_name, :file_type,
-                     :mime, :storage_path, :bucket, :size, :uploaded_by::uuid)
+                    (:id, :dataset_id, :name, :orig_name, :file_type,
+                     :mime, :storage_path, :bucket, :size, :uploaded_by)
             """),
             {
-                "id":           file_uuid,
-                "dataset_id":   dataset_id,
+                "id":           uuid.UUID(file_uuid),
+                "dataset_id":   uuid.UUID(dataset_id),
                 "name":         file.filename,
                 "orig_name":    file.filename,
                 "file_type":    file_type,
@@ -75,7 +73,7 @@ async def upload_file(
                 "storage_path": storage_path,
                 "bucket":       storage.bucket_name,
                 "size":         len(content),
-                "uploaded_by":  user_id,
+                "uploaded_by":  uuid.UUID(user_id) if user_id else None,
             },
         )
 
@@ -84,11 +82,11 @@ async def upload_file(
         await db.execute(
             text("""
                 INSERT INTO audit_log (user_id, action, entity, entity_id, details)
-                VALUES (:user::uuid, 'UPLOAD', 'files', :entity_id::uuid, :details::jsonb)
+                VALUES (:user, 'UPLOAD', 'files', :entity_id, CAST(:details AS JSONB))
             """),
             {
-                "user":      user_id,
-                "entity_id": file_uuid,
+                "user":      uuid.UUID(user_id) if user_id else None,
+                "entity_id": uuid.UUID(file_uuid),
                 "details":   json.dumps({
                     "filename":  file.filename,
                     "file_type": file_type,
@@ -114,34 +112,40 @@ async def list_files(dataset_id: str, db: AsyncSession = Depends(get_db)):
     import uuid as uuid_mod
     from datetime import datetime
 
-    result = await db.execute(
-        text("""
-            SELECT id, dataset_id, name, file_type, size_bytes,
-                   mime_type, storage_path, uploaded_by, created_at
-            FROM files
-            WHERE dataset_id = :ds_id::uuid
-            ORDER BY created_at DESC
-        """),
-        {"ds_id": dataset_id},
-    )
-    rows = result.mappings().all()
+    try:
+        result = await db.execute(
+            text("""
+                SELECT id, dataset_id, name, file_type, size_bytes,
+                       mime_type, storage_path, uploaded_by, created_at
+                FROM files
+                WHERE dataset_id = :ds_id
+                ORDER BY created_at DESC
+            """),
+            {"ds_id": uuid_mod.UUID(dataset_id)},
+        )
+        rows = result.mappings().all()
 
-    def serialize(v):
-        if isinstance(v, uuid_mod.UUID): return str(v)
-        if isinstance(v, datetime):      return v.isoformat()
-        return v
+        def serialize(v):
+            if isinstance(v, uuid_mod.UUID): return str(v)
+            if isinstance(v, datetime):      return v.isoformat()
+            return v
 
-    return [{k: serialize(v) for k, v in row.items()} for row in rows]
+        return [{k: serialize(v) for k, v in row.items()} for row in rows]
+    except Exception as e:
+        logger.error(f"Error listando archivos: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/download/{file_id}")
 async def get_file_url(file_id: str, db: AsyncSession = Depends(get_db)):
     """Genera una URL temporal firmada para descarga del archivo."""
+    import uuid as uuid_mod
     result = await db.execute(
-        text("SELECT storage_path, name FROM files WHERE id = :id::uuid"),
-        {"id": file_id},
+        text("SELECT storage_path, name FROM files WHERE id = :id"),
+        {"id": uuid_mod.UUID(file_id)},
     )
     file_data = result.fetchone()
+
 
     if not file_data:
         raise HTTPException(status_code=404, detail="Archivo no encontrado")

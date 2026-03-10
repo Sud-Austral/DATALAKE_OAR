@@ -45,27 +45,33 @@ async def list_datasets(db: AsyncSession = Depends(get_db)):
 async def create_dataset(ds: DatasetCreate, db: AsyncSession = Depends(get_db)):
     """Crea un nuevo contenedor de datos (Dataset)."""
     try:
+        import uuid
         result = await db.execute(
             text("""
                 INSERT INTO datasets (name, description, domain, owner_id)
-                VALUES (:name, :description, :domain, :owner_id::uuid)
+                VALUES (:name, :description, :domain, :owner_id)
                 RETURNING id, created_at
             """),
-            ds.model_dump(),
+            {
+                "name": ds.name,
+                "description": ds.description,
+                "domain": ds.domain,
+                "owner_id": uuid.UUID(ds.owner_id)
+            },
         )
         row = result.fetchone()
         new_id = row[0]
 
-        # FIX-10: details en audit_log es JSONB — se pasa como dict, no como string.
+        import json
         await db.execute(
             text("""
                 INSERT INTO audit_log (user_id, action, entity, entity_id, details)
-                VALUES (:user::uuid, 'CREATE', 'datasets', :id, :details::jsonb)
+                VALUES (:user, 'CREATE', 'datasets', :id, CAST(:details AS JSONB))
             """),
             {
-                "user": ds.owner_id,
-                "id": str(new_id),
-                "details": f'{{"dataset_name": "{ds.name}"}}',
+                "user": uuid.UUID(ds.owner_id),
+                "id": new_id,
+                "details": json.dumps({"dataset_name": ds.name}),
             },
         )
         await db.commit()
