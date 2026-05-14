@@ -1,8 +1,10 @@
-document.addEventListener('DOMContentLoaded', () => {
+﻿document.addEventListener('DOMContentLoaded', () => {
 
     // ── Estado global ─────────────────────────────────────────────────
     let currentUser = null;
     let currentDatasetId = null;
+    let _allIngestions = [];       // cache para el filtro de ingestas
+    let _pollingTimers = {};        // {ingestion_id: intervalId}
 
     // ── Helpers UI ────────────────────────────────────────────────────
     const $ = id => document.getElementById(id);
@@ -50,6 +52,11 @@ document.addEventListener('DOMContentLoaded', () => {
         $('displayUser').textContent = user.username;
         $('displayRole').textContent = user.role.toUpperCase();
         $('avatarLetter').textContent = user.username[0].toUpperCase();
+        // Ocultar "Configuración" si no es admin
+        const settingsNavItem = document.querySelector('[data-view="settingsView"]');
+        if (settingsNavItem && user.role !== 'admin') {
+            settingsNavItem.style.display = 'none';
+        }
         switchView('dashboardView');
     }
 
@@ -99,8 +106,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!target) { console.warn('Vista no encontrada:', viewId); return; }
         target.style.display = 'block';
 
-        if (viewId === 'dashboardView') loadDashboard();
-        if (viewId === 'datasetsView') loadDatasets();
+        if (viewId === 'dashboardView')   loadDashboard();
+        if (viewId === 'datasetsView')    loadDatasets();
+        if (viewId === 'ingestionsView')  loadIngestions();
+        if (viewId === 'settingsView')    loadSettingsView();
     }
 
     navItems.forEach(item => {
@@ -159,7 +168,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     function fmtDetails(d) {
         if (!d) return '';
-        if (typeof d === 'object') return d.filename || d.dataset_name || JSON.stringify(d);
+        if (typeof d === 'object') return d.filename || d.dataset_name || d.source || JSON.stringify(d);
         return String(d);
     }
 
@@ -368,6 +377,449 @@ document.addEventListener('DOMContentLoaded', () => {
             btn.disabled = false;
         }
     });
+
+    // ══════════════════════════════════════════════════════════════════
+    // INGESTAS API
+    // ══════════════════════════════════════════════════════════════════
+
+    // ── Helpers de estado ─────────────────────────────────────────────
+    function ingStatusBadge(status) {
+        const MAP = {
+            pending: '<span class="badge badge-gray">⏳ Pendiente</span>',
+            running: '<span class="badge badge-blue">🔄 Ejecutando</span>',
+            success: '<span class="badge badge-green">✅ Exitosa</span>',
+            failed:  '<span class="badge badge-red">❌ Fallida</span>',
+        };
+        return MAP[status] || `<span class="badge badge-gray">${status}</span>`;
+    }
+
+    function fmtDate(iso) {
+        if (!iso) return '—';
+        return new Date(iso).toLocaleString('es-CL');
+    }
+
+    // ── Render de tabla ───────────────────────────────────────────────
+    function renderIngestions(list) {
+        const tbody = $('ingestionsTableBody');
+        if (!list.length) {
+            tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:3rem;color:var(--text-muted)">
+                <div style="font-size:2.5rem;margin-bottom:0.5rem">📭</div>
+                No hay ingestas configuradas aún.
+            </td></tr>`;
+            return;
+        }
+        tbody.innerHTML = list.map(ing => `
+            <tr id="ing-row-${ing.id}">
+                <td><strong>${escHtml(ing.source)}</strong></td>
+                <td class="endpoint-cell" title="${escHtml(ing.endpoint)}">${escHtml(ing.endpoint)}</td>
+                <td><span class="badge badge-method">${ing.method}</span></td>
+                <td id="ing-status-${ing.id}">${ingStatusBadge(ing.status)}</td>
+                <td>${fmtDate(ing.finished_at || ing.started_at)}</td>
+                <td class="actions-cell">
+                    <button class="btn btn-primary btn-sm" onclick="runIngestion('${ing.id}')"
+                        ${ing.status === 'running' ? 'disabled' : ''}>▶ Ejecutar</button>
+                    <button class="btn btn-secondary btn-sm" onclick="deleteIngestion('${ing.id}')">🗑️</button>
+                </td>
+            </tr>
+            ${ing.status === 'failed' && ing.error_message ? `
+            <tr>
+                <td colspan="6" class="error-row">
+                    <details><summary>Ver error</summary><pre>${escHtml(ing.error_message)}</pre></details>
+                </td>
+            </tr>` : ''}
+        `).join('');
+    }
+
+    // ── Carga principal ───────────────────────────────────────────────
+    async function loadIngestions() {
+        const tbody = $('ingestionsTableBody');
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:2rem;color:var(--text-muted)">Cargando...</td></tr>';
+        try {
+            _allIngestions = await api('/api/ingestions/');
+            applyIngestionFilter();
+        } catch (e) {
+            tbody.innerHTML = `<tr><td colspan="6" style="color:var(--danger);padding:1rem">Error: ${e.message}</td></tr>`;
+        }
+    }
+
+    // ── Filtros ───────────────────────────────────────────────────────
+    let _activeFilter = 'all';
+    document.querySelectorAll('#ingestionFilterBar .filter-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('#ingestionFilterBar .filter-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            _activeFilter = btn.getAttribute('data-filter');
+            applyIngestionFilter();
+        });
+    });
+
+    function applyIngestionFilter() {
+        const filtered = _activeFilter === 'all'
+            ? _allIngestions
+            : _allIngestions.filter(i => i.status === _activeFilter);
+        renderIngestions(filtered);
+    }
+
+    // ── Ejecutar ──────────────────────────────────────────────────────
+    window.runIngestion = async function (id) {
+        try {
+            await api(`/api/ingestions/${id}/run`, { method: 'POST' });
+            // Actualizar visualmente a "running" de inmediato
+            const cell = $(`ing-status-${id}`);
+            if (cell) cell.innerHTML = ingStatusBadge('running');
+            // Iniciar polling
+            startPolling(id);
+        } catch (e) {
+            alert(`Error al ejecutar ingesta:\n${e.message}`);
+        }
+    };
+
+    function startPolling(id) {
+        if (_pollingTimers[id]) return;   // ya está corriendo
+        _pollingTimers[id] = setInterval(async () => {
+            try {
+                const data = await api(`/api/ingestions/${id}/status`);
+                const cell = $(`ing-status-${id}`);
+                if (cell) cell.innerHTML = ingStatusBadge(data.status);
+                if (data.status !== 'running') {
+                    clearInterval(_pollingTimers[id]);
+                    delete _pollingTimers[id];
+                    // Recargar lista completa para refrescar fechas
+                    await loadIngestions();
+                }
+            } catch {
+                clearInterval(_pollingTimers[id]);
+                delete _pollingTimers[id];
+            }
+        }, 2500);  // cada 2.5 segundos
+    }
+
+    // ── Eliminar ──────────────────────────────────────────────────────
+    window.deleteIngestion = async function (id) {
+        if (!confirm('¿Eliminar esta ingesta permanentemente?')) return;
+        try {
+            await api(`/api/ingestions/${id}`, { method: 'DELETE' });
+            _allIngestions = _allIngestions.filter(i => i.id !== id);
+            applyIngestionFilter();
+        } catch (e) {
+            alert(`Error al eliminar:\n${e.message}`);
+        }
+    };
+
+    // ── Modal: Nueva Ingesta ──────────────────────────────────────────
+    async function openIngestionModal() {
+        $('ingestionForm').reset();
+        // Cargar datasets en el select
+        const sel = $('ingDataset');
+        sel.innerHTML = '<option value="">— Sin asignar —</option>';
+        try {
+            const datasets = await api('/api/datasets/');
+            datasets.forEach(ds => {
+                const opt = document.createElement('option');
+                opt.value = ds.id;
+                opt.textContent = ds.name;
+                sel.appendChild(opt);
+            });
+        } catch { /* sin datasets disponibles */ }
+        flex('ingestionModal');
+    }
+
+    $('newIngestionBtn').addEventListener('click', openIngestionModal);
+    $('closeIngestionModal').addEventListener('click', () => hide('ingestionModal'));
+    $('ingestionModal').addEventListener('click', e => {
+        if (e.target === $('ingestionModal')) hide('ingestionModal');
+    });
+
+    $('ingestionForm').addEventListener('submit', async e => {
+        e.preventDefault();
+        const btn = $('ingestionSubmitBtn');
+        btn.textContent = 'Guardando...';
+        btn.disabled = true;
+
+        // Parsear JSON de params y headers (tolerante a error)
+        const parseJSON = (text, field) => {
+            if (!text.trim()) return {};
+            try { return JSON.parse(text); }
+            catch { alert(`El campo "${field}" no es JSON válido.`); throw new Error('bad json'); }
+        };
+
+        try {
+            const params  = parseJSON($('ingParams').value, 'Parámetros');
+            const headers = parseJSON($('ingHeaders').value, 'Headers');
+            const dsId    = $('ingDataset').value || null;
+
+            await api('/api/ingestions/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    source:     $('ingSource').value.trim(),
+                    endpoint:   $('ingEndpoint').value.trim(),
+                    method:     $('ingMethod').value,
+                    parameters: params,
+                    headers:    headers,
+                    dataset_id: dsId,
+                }),
+            });
+            hide('ingestionModal');
+            await loadIngestions();
+        } catch (err) {
+            if (!err.message.includes('bad json'))
+                alert(`Error al guardar ingesta:\n${err.message}`);
+        } finally {
+            btn.textContent = '✅ Guardar Ingesta';
+            btn.disabled = false;
+        }
+    });
+
+    // ══════════════════════════════════════════════════════════════════
+    // CONFIGURACIÓN
+    // ══════════════════════════════════════════════════════════════════
+
+    function loadSettingsView() {
+        // Cargar el tab activo
+        const activeTab = document.querySelector('.settings-tab.active');
+        if (activeTab) switchSettingsTab(activeTab.getAttribute('data-tab'));
+    }
+
+    // ── Tabs de Configuración ─────────────────────────────────────────
+    const ALL_SETTINGS_TABS = ['tabUsers', 'tabSystemInfo', 'tabAudit'];
+
+    function switchSettingsTab(tabId) {
+        ALL_SETTINGS_TABS.forEach(t => {
+            const el = $(t);
+            if (el) el.style.display = 'none';
+        });
+        document.querySelectorAll('.settings-tab').forEach(b => b.classList.remove('active'));
+        const target = $(tabId);
+        if (target) target.style.display = 'block';
+        const activeBtn = document.querySelector(`.settings-tab[data-tab="${tabId}"]`);
+        if (activeBtn) activeBtn.classList.add('active');
+
+        if (tabId === 'tabUsers')      loadUsers();
+        if (tabId === 'tabSystemInfo') loadSystemInfo();
+        if (tabId === 'tabAudit')      loadAuditLog();
+    }
+
+    document.querySelectorAll('.settings-tab').forEach(btn => {
+        btn.addEventListener('click', () => switchSettingsTab(btn.getAttribute('data-tab')));
+    });
+
+    // ── Usuarios ──────────────────────────────────────────────────────
+    async function loadUsers() {
+        const tbody = $('usersTableBody');
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:2rem;color:var(--text-muted)">Cargando...</td></tr>';
+        try {
+            const users = await api('/api/config/users');
+            if (!users.length) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:2rem;color:var(--text-muted)">No hay usuarios.</td></tr>';
+                return;
+            }
+            tbody.innerHTML = users.map(u => `
+                <tr>
+                    <td><strong>${escHtml(u.username)}</strong></td>
+                    <td>${escHtml(u.email || '—')}</td>
+                    <td>${roleBadge(u.role)}</td>
+                    <td>${u.is_active
+                        ? '<span class="badge badge-green">Activo</span>'
+                        : '<span class="badge badge-gray">Inactivo</span>'}</td>
+                    <td>${u.created_at ? new Date(u.created_at).toLocaleDateString('es-CL') : '—'}</td>
+                    <td class="actions-cell">
+                        <button class="btn btn-secondary btn-sm"
+                            onclick="editUser('${u.id}','${escHtml(u.username)}','${escHtml(u.email || '')}','${u.role}')">
+                            ✏️ Editar
+                        </button>
+                        ${u.id !== currentUser?.id ? `
+                        <button class="btn btn-secondary btn-sm" style="color:var(--danger)"
+                            onclick="deleteUser('${u.id}')">🗑️</button>` : ''}
+                    </td>
+                </tr>`).join('');
+        } catch (e) {
+            if (e.message.includes('403')) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:2rem;color:var(--text-muted)">🔒 Solo los administradores pueden ver los usuarios.</td></tr>';
+            } else {
+                tbody.innerHTML = `<tr><td colspan="6" style="color:var(--danger);padding:1rem">Error: ${e.message}</td></tr>`;
+            }
+        }
+    }
+
+    function roleBadge(role) {
+        const MAP = {
+            admin:  '<span class="badge badge-blue">🔑 Admin</span>',
+            editor: '<span class="badge badge-green">✏️ Editor</span>',
+            viewer: '<span class="badge badge-gray">👁️ Viewer</span>',
+        };
+        return MAP[role] || `<span class="badge badge-gray">${role}</span>`;
+    }
+
+    // Modal: Nuevo Usuario
+    function openUserModal(editId = null, username = '', email = '', role = 'viewer') {
+        $('userForm').reset();
+        $('userEditId').value = editId || '';
+        if (editId) {
+            $('userModalTitle').textContent = '✏️ Editar Usuario';
+            $('userUsername').value = username;
+            $('userUsername').disabled = true;   // no cambiar username en edición
+            $('userEmail').value = email;
+            $('userRole').value = role;
+            $('pwHint').textContent = '(dejar vacío para no cambiar)';
+        } else {
+            $('userModalTitle').textContent = '👤 Nuevo Usuario';
+            $('userUsername').disabled = false;
+            $('pwHint').textContent = '(requerida)';
+        }
+        flex('userModal');
+    }
+
+    window.editUser = function (id, username, email, role) {
+        openUserModal(id, username, email, role);
+    };
+
+    window.deleteUser = async function (id) {
+        if (!confirm('¿Eliminar este usuario permanentemente?\nEsta acción no se puede deshacer.')) return;
+        try {
+            await api(`/api/config/users/${id}`, { method: 'DELETE' });
+            await loadUsers();
+        } catch (e) {
+            alert(`Error al eliminar usuario:\n${e.message}`);
+        }
+    };
+
+    $('newUserBtn').addEventListener('click', () => openUserModal());
+    $('closeUserModal').addEventListener('click', () => hide('userModal'));
+    $('userModal').addEventListener('click', e => {
+        if (e.target === $('userModal')) hide('userModal');
+    });
+
+    $('userForm').addEventListener('submit', async e => {
+        e.preventDefault();
+        const btn = $('userSubmitBtn');
+        btn.textContent = 'Guardando...';
+        btn.disabled = true;
+
+        const editId   = $('userEditId').value;
+        const password = $('userPassword').value;
+        const isNew    = !editId;
+
+        if (isNew && !password) {
+            alert('La contraseña es obligatoria para nuevos usuarios.');
+            btn.textContent = '✅ Guardar'; btn.disabled = false;
+            return;
+        }
+
+        try {
+            if (isNew) {
+                await api('/api/config/users', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        username: $('userUsername').value.trim(),
+                        email:    $('userEmail').value.trim(),
+                        password: password,
+                        role:     $('userRole').value,
+                    }),
+                });
+            } else {
+                const body = {
+                    email:    $('userEmail').value.trim() || undefined,
+                    role:     $('userRole').value,
+                };
+                if (password) body.password = password;
+                await api(`/api/config/users/${editId}`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+            }
+            hide('userModal');
+            await loadUsers();
+        } catch (err) {
+            alert(`Error al guardar usuario:\n${err.message}`);
+        } finally {
+            btn.textContent = '✅ Guardar';
+            btn.disabled = false;
+        }
+    });
+
+    // ── System Info ───────────────────────────────────────────────────
+    async function loadSystemInfo() {
+        try {
+            const info = await api('/api/config/system-info');
+
+            // Usuarios por rol
+            let totalUsers = 0;
+            info.users_by_role.forEach(r => { totalUsers += Number(r.cnt); });
+            setText('sysUserTotal', totalUsers);
+
+            // Ingestas
+            let success = 0, failed = 0;
+            info.ingestions_by_status.forEach(r => {
+                if (r.status === 'success') success += Number(r.cnt);
+                if (r.status === 'failed')  failed  += Number(r.cnt);
+            });
+            setText('sysIngSuccess', success);
+            setText('sysIngFailed', failed);
+            setText('sysAuditTotal', info.audit_total);
+
+            // Chart de roles (barras inline)
+            const chart = $('roleChart');
+            if (chart) {
+                const maxCount = Math.max(...info.users_by_role.map(r => Number(r.cnt)), 1);
+                const COLORS = { admin: '#818CF8', editor: '#34D399', viewer: '#6B7280' };
+                chart.innerHTML = info.users_by_role.map(r => {
+                    const pct = Math.round((Number(r.cnt) / maxCount) * 100);
+                    const col = COLORS[r.role] || '#6B7280';
+                    return `
+                    <div style="display:flex;align-items:center;gap:1rem;margin-bottom:0.75rem;">
+                        <span style="width:70px;font-size:0.85rem;color:var(--text-muted)">${r.role}</span>
+                        <div style="flex:1;background:var(--bg-tertiary);border-radius:4px;height:10px;">
+                            <div style="width:${pct}%;background:${col};height:100%;border-radius:4px;transition:width 0.5s;"></div>
+                        </div>
+                        <span style="width:30px;text-align:right;font-size:0.85rem;font-weight:600">${r.cnt}</span>
+                    </div>`;
+                }).join('');
+            }
+        } catch (e) {
+            console.error('System info error:', e.message);
+        }
+    }
+
+    // ── Audit Log ─────────────────────────────────────────────────────
+    async function loadAuditLog() {
+        const tbody = $('auditTableBody');
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:2rem;color:var(--text-muted)">Cargando...</td></tr>';
+        try {
+            const entries = await api('/api/config/audit-log?limit=100');
+            if (!entries.length) {
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:2rem;color:var(--text-muted)">Sin registros de auditoría.</td></tr>';
+                return;
+            }
+            tbody.innerHTML = entries.map(e => `
+                <tr>
+                    <td style="white-space:nowrap;">${e.created_at ? new Date(e.created_at).toLocaleString('es-CL') : '—'}</td>
+                    <td>${escHtml(e.username || '—')}</td>
+                    <td><span class="badge ${auditActionBadge(e.action)}">${e.action}</span></td>
+                    <td><code style="font-size:0.75rem;">${escHtml(e.entity)}</code></td>
+                    <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
+                        title="${escHtml(typeof e.details === 'object' ? JSON.stringify(e.details) : String(e.details || ''))}"
+                    >${typeof e.details === 'object' ? JSON.stringify(e.details) : escHtml(String(e.details || ''))}</td>
+                </tr>`).join('');
+        } catch (err) {
+            if (err.message.includes('403')) {
+                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:2rem;color:var(--text-muted)">🔒 Solo los administradores pueden ver el audit log.</td></tr>';
+            } else {
+                tbody.innerHTML = `<tr><td colspan="5" style="color:var(--danger);padding:1rem">Error: ${err.message}</td></tr>`;
+            }
+        }
+    }
+
+    function auditActionBadge(action) {
+        if (['UPLOAD', 'CREATE', 'CREATE_USER'].some(a => action.includes(a))) return 'badge-green';
+        if (['DELETE', 'DELETE_USER'].some(a => action.includes(a))) return 'badge-red';
+        if (['RUN_INGESTION'].some(a => action.includes(a))) return 'badge-blue';
+        return 'badge-gray';
+    }
+
+    $('refreshAuditBtn')?.addEventListener('click', loadAuditLog);
 
     // ══════════════════════════════════════════════════════════════════
     // INICIO

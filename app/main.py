@@ -43,12 +43,15 @@ app.add_middleware(
 
 # FIX-2: Los routers se importan DESPUÉS de load_dotenv() para que puedan
 # leer variables de entorno correctamente durante sus propias importaciones.
-from app.routers import dashboard, auth, datasets, files
+from app.routers import dashboard, auth, datasets, files, api_ingestions, config, oar
 
-app.include_router(auth.router,      prefix="/api/auth",      tags=["auth"])
-app.include_router(dashboard.router, prefix="/api/dashboard", tags=["dashboard"])
-app.include_router(datasets.router,  prefix="/api/datasets",  tags=["datasets"])
-app.include_router(files.router,     prefix="/api/files",     tags=["files"])
+app.include_router(auth.router,            prefix="/api/auth",        tags=["auth"])
+app.include_router(dashboard.router,       prefix="/api/dashboard",   tags=["dashboard"])
+app.include_router(datasets.router,        prefix="/api/datasets",    tags=["datasets"])
+app.include_router(files.router,           prefix="/api/files",       tags=["files"])
+app.include_router(api_ingestions.router,  prefix="/api/ingestions",  tags=["ingestions"])
+app.include_router(config.router,          prefix="/api/config",      tags=["config"])
+app.include_router(oar.router,             prefix="/api/oar",         tags=["oar"])
 
 @app.get("/health", tags=["system"])
 async def health():
